@@ -30,7 +30,12 @@ export default function TypingTest() {
   const [playerName, setPlayerName] = useState('');
   const [roomInput, setRoomInput] = useState('');
   const [roomId, setRoomId] = useState('');
-  const [hasJoinedRoom, setHasJoinedRoom] = useState(false);
+  const [gamePhase, setGamePhase] = useState<'setup' | 'lobby' | 'countdown' | 'racing'>('setup');
+  const [isHost, setIsHost] = useState(false);
+  const [countdown, setCountdown] = useState(3);
+  const [roomPlayers, setRoomPlayers] = useState<{ id: string; name: string }[]>([]);
+  const [myPlacement, setMyPlacement] = useState<number | null>(null);
+  const [raceResults, setRaceResults] = useState<{ name: string; placement: number; wpm: number; accuracy: number }[] | null>(null);
 
   const resetLocalState = () => {
     setCursor(0);
@@ -115,6 +120,78 @@ export default function TypingTest() {
   }, [socket]);
 
   useEffect(() => {
+    if (!socket) return;
+    const handleRoomPlayers = (players: { id: string; name: string }[]) => {
+      setRoomPlayers(players);
+    };
+    socket.on('room_players', handleRoomPlayers);
+    return () => {
+      socket.off('room_players', handleRoomPlayers);
+    };
+  }, [socket]);
+
+  useEffect(() => {
+    if (!socket) return;
+    const handleCountdownTick = (count: number) => {
+      setGamePhase('countdown');
+      setCountdown(count);
+    };
+    const handleRaceStart = () => {
+      setMyPlacement(null);
+      setRaceResults(null);
+      setGamePhase('racing');
+      setIsRunning(true);
+    };
+    const handlePlayerFinished = (data: { name: string; placement: number; wpm: number; accuracy: number }) => {
+      if (data.name === playerName) setMyPlacement(data.placement);
+    };
+    const handleRaceResults = (results: { name: string; placement: number; wpm: number; accuracy: number }[]) => {
+      setRaceResults(results);
+    };
+    const handlePlayAgain = () => {
+      resetLocalState();
+      setRaceResults(null);
+      setMyPlacement(null);
+      setGamePhase('lobby');
+    };
+    socket.on('countdown_tick', handleCountdownTick);
+    socket.on('race_start', handleRaceStart);
+    socket.on('player_finished', handlePlayerFinished);
+    socket.on('race_results', handleRaceResults);
+    socket.on('play_again', handlePlayAgain);
+    return () => {
+      socket.off('countdown_tick', handleCountdownTick);
+      socket.off('race_start', handleRaceStart);
+      socket.off('player_finished', handlePlayerFinished);
+      socket.off('race_results', handleRaceResults);
+      socket.off('play_again', handlePlayAgain);
+    };
+  }, [socket, playerName]);
+
+  const correctCount = useMemo(
+    () => charStates.filter((state) => state === 'correct').length,
+    [charStates]
+  );
+
+  const incorrectCount = useMemo(
+    () => charStates.filter((state) => state === 'incorrect').length,
+    [charStates]
+  );
+
+  const accuracy = useMemo(() => {
+    if (typedCount === 0) return 100;
+    return Math.round((correctCount / typedCount) * 100);
+  }, [correctCount, typedCount]);
+
+  const elapsedTime = finalElapsedTime ?? (TEST_DURATION - timeLeft);
+
+  const wpm = useMemo(() => {
+    if (elapsedTime <= 0) return 0;
+    const minutes = elapsedTime / 60;
+    return Math.round((correctCount / 5) / minutes);
+  }, [correctCount, elapsedTime]);
+
+  useEffect(() => {
     if (!isRunning || isFinished) return;
 
     const timer = setInterval(() => {
@@ -124,6 +201,9 @@ export default function TypingTest() {
           setFinalElapsedTime(elapsed);
           setIsRunning(false);
           setIsFinished(true);
+          if (socket && roomId) {
+            socket.emit('race_finish', { roomId, wpm, accuracy });
+          }
           return 0;
         }
         return prev - 1;
@@ -131,12 +211,12 @@ export default function TypingTest() {
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [isRunning, isFinished]);
+  }, [isRunning, isFinished, socket, roomId, wpm, accuracy]);
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       const target = e.target as HTMLElement;
-      // 🚨 Ignore input fields
+      // Ignore input fields
       if (
         target.tagName === 'INPUT' ||
         target.tagName === 'TEXTAREA' ||
@@ -144,11 +224,7 @@ export default function TypingTest() {
       ) {
         return;
       }
-      if (isFinished) return;
-
-      if (!isRunning && e.key.length === 1) {
-        setIsRunning(true);
-      }
+      if (isFinished || gamePhase !== 'racing') return;
 
       if (e.key === 'Backspace') {
         e.preventDefault();
@@ -200,6 +276,9 @@ export default function TypingTest() {
         setFinalElapsedTime(elapsed);
         setIsRunning(false);
         setIsFinished(true);
+        if (socket && roomId) {
+          socket.emit('race_finish', { roomId, wpm, accuracy });
+        }
       }
     }
 
@@ -207,30 +286,7 @@ export default function TypingTest() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [cursor, text, isRunning, isFinished, timeLeft, socket, roomId]);
-
-  const correctCount = useMemo(
-    () => charStates.filter((state) => state === 'correct').length,
-    [charStates]
-  );
-
-  const incorrectCount = useMemo(
-    () => charStates.filter((state) => state === 'incorrect').length,
-    [charStates]
-  );
-
-  const accuracy = useMemo(() => {
-    if (typedCount === 0) return 100;
-    return Math.round((correctCount / typedCount) * 100);
-  }, [correctCount, typedCount]);
-
-  const elapsedTime = finalElapsedTime ?? (TEST_DURATION - timeLeft);
-
-  const wpm = useMemo(() => {
-    if (elapsedTime <= 0) return 0;
-    const minutes = elapsedTime / 60;
-    return Math.round((correctCount / 5) / minutes);
-  }, [correctCount, elapsedTime]);
+  }, [cursor, text, isRunning, isFinished, timeLeft, socket, roomId, gamePhase]);
 
   const getCharacterClass = (index: number) => {
     const state = charStates[index];
@@ -253,11 +309,12 @@ const handleCreateRoom = () => {
   const newRoomId = generateRoomCode();
   resetLocalState();
 
-  socket.emit('join_room', newRoomId);
+  socket.emit('join_room', { roomId: newRoomId, playerName });
 
   setRoomId(newRoomId);
   setRoomInput(newRoomId);
-  setHasJoinedRoom(true);
+  setIsHost(true);
+  setGamePhase('lobby');
 };
 
 const handleJoinRoom = () => {
@@ -266,13 +323,13 @@ const handleJoinRoom = () => {
   const trimmedRoom = roomInput.trim().toUpperCase();
   resetLocalState();
 
-  socket.emit('join_room', trimmedRoom);
+  socket.emit('join_room', { roomId: trimmedRoom, playerName });
 
   setRoomId(trimmedRoom);
-  setHasJoinedRoom(true);
+  setGamePhase('lobby');
 };
 
-  if (!hasJoinedRoom) {
+  if (gamePhase === 'setup') {
   return (
     <main className="min-h-screen flex items-center justify-center bg-neutral-900 px-6 text-white">
       <div className="w-full max-w-md rounded-xl bg-neutral-800 p-6 shadow-lg">
@@ -318,6 +375,100 @@ const handleJoinRoom = () => {
   );
 }
 
+  if (gamePhase === 'lobby') {
+    return (
+      <main className="min-h-screen flex items-center justify-center bg-neutral-900 px-6 text-white">
+        <div className="w-full max-w-md rounded-xl bg-neutral-800 p-6 shadow-lg">
+          <div className="mb-1 text-xs text-neutral-500">Room: {roomId}</div>
+          <h2 className="mb-6 text-xl font-semibold">Waiting for players</h2>
+
+          <div className="mb-6 flex flex-col gap-2">
+            {roomPlayers.map((p) => (
+              <div key={p.id} className="flex items-center gap-2 text-sm">
+                <span className={p.id === socket?.id ? 'text-white font-semibold' : 'text-neutral-300'}>
+                  {p.name}
+                </span>
+                {p.id === socket?.id && (
+                  <span className="text-xs text-neutral-500">(you)</span>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {isHost ? (
+            <button
+              onClick={() => socket?.emit('start_race', { roomId })}
+              className="w-full rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-500"
+            >
+              Start Race
+            </button>
+          ) : (
+            <p className="text-sm text-neutral-400">Waiting for host to start...</p>
+          )}
+        </div>
+      </main>
+    );
+  }
+
+  if (gamePhase === 'countdown') {
+    return (
+      <main className="min-h-screen flex items-center justify-center bg-neutral-900 text-white">
+        <div className="text-8xl font-bold">{countdown}</div>
+      </main>
+    );
+  }
+
+  if (raceResults) {
+    const placementLabel = (n: number) => n === 1 ? '1st' : n === 2 ? '2nd' : n === 3 ? '3rd' : `${n}th`;
+    return (
+      <main className="min-h-screen flex items-center justify-center bg-neutral-900 px-6 text-white">
+        <div className="w-full max-w-md rounded-xl bg-neutral-800 p-6 shadow-lg">
+          <h2 className="mb-6 text-xl font-semibold">Race Results</h2>
+          <div className="flex flex-col gap-3">
+            {raceResults.map((r) => {
+              const isMe = r.name === playerName;
+              const isWinner = r.placement === 1;
+              return (
+                <div
+                  key={r.placement}
+                  className={`flex items-center justify-between rounded-md px-4 py-3 text-sm ${
+                    isWinner ? 'bg-yellow-500/10 border border-yellow-500/30' : 'bg-neutral-700'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <span className={`font-bold ${isWinner ? 'text-yellow-400' : 'text-neutral-400'}`}>
+                      {placementLabel(r.placement)}
+                    </span>
+                    <span className={isMe ? 'text-white font-semibold' : 'text-neutral-300'}>
+                      {r.name}{isMe ? ' (you)' : ''}
+                    </span>
+                  </div>
+                  <span className="text-neutral-400">
+                    <span className="text-white">{r.wpm}</span> WPM · <span className="text-white">{r.accuracy}%</span> Accuracy
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          {isHost && (
+            <button
+              onClick={() => {
+                resetLocalState();
+                setRaceResults(null);
+                setMyPlacement(null);
+                setGamePhase('lobby');
+                socket?.emit('play_again', { roomId });
+              }}
+              className="mt-6 w-full rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-500"
+            >
+              Play Again
+            </button>
+          )}
+        </div>
+      </main>
+    );
+  }
+
   return (
     
     <main className="min-h-screen flex flex-col items-center justify-center gap-8 bg-neutral-900 px-6 text-white">
@@ -329,6 +480,17 @@ const handleJoinRoom = () => {
             </>
           )}
       </div>
+      {roomPlayers.length > 0 && (
+        <div className="flex items-center gap-2 text-sm text-neutral-400">
+          <span>Players in room:</span>
+          <span className="text-neutral-600">|</span>
+          {roomPlayers.map((p, i) => (
+            <span key={p.id} className={p.id === socket?.id ? 'text-white font-semibold' : ''}>
+              {p.name}{i < roomPlayers.length - 1 ? ' ·' : ''}
+            </span>
+          ))}
+        </div>
+      )}
       <div className="flex gap-6 text-sm text-neutral-300">
         <div>Time: <span className="text-white">{timeLeft}s</span></div>
         <div>WPM: <span className="text-white">{wpm}</span></div>

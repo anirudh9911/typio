@@ -23,7 +23,7 @@ export default function TypingTest() {
   const [opponentProgress, setOpponentProgress] = useState<Record<string, {
     userId: string;
     cursor: number;
-    wpm: number;
+    correctChars: number;
     accuracy: number;
   }>>({});
   const [playerName, setPlayerName] = useState('');
@@ -35,7 +35,6 @@ export default function TypingTest() {
   const [testDuration, setTestDuration] = useState(30);
   const [duration, setDuration] = useState(30);
   const [roomPlayers, setRoomPlayers] = useState<{ id: string; name: string }[]>([]);
-  const [myPlacement, setMyPlacement] = useState<number | null>(null);
   const [raceResults, setRaceResults] = useState<{ name: string; placement: number; wpm: number; accuracy: number }[] | null>(null);
   const [leaderboard, setLeaderboard] = useState<{ player_name: string; best_wpm: number; rank: number }[]>([]);
   const [joinError, setJoinError] = useState<string | null>(null);
@@ -85,14 +84,21 @@ export default function TypingTest() {
   useEffect(() =>{
     if(!socket)return;
 
-    const handleProgressUpdate = (data : {
-      userId: string,
-      cursor: number,
-      wpm: number,
-      accuracy: number
-    }) =>{
-      console.log("Other user: ", data);
-      setOpponentProgress((prev) => ({ ...prev, [data.userId]: data }));
+    const handleProgressUpdate = (data: {
+      userId: string;
+      cursor: number;
+      wpm: number;
+      accuracy: number;
+    }) => {
+      setOpponentProgress((prev) => ({
+        ...prev,
+        [data.userId]: {
+          userId: data.userId,
+          cursor: data.cursor,
+          correctChars: Math.round(data.cursor * data.accuracy / 100),
+          accuracy: data.accuracy,
+        },
+      }));
     };
 
     socket.on("progress_update", handleProgressUpdate);
@@ -111,7 +117,15 @@ export default function TypingTest() {
       wpm: number;
       accuracy: number;
     }) => {
-      setOpponentProgress((prev) => ({ ...prev, [data.userId]: data }));
+      setOpponentProgress((prev) => ({
+        ...prev,
+        [data.userId]: {
+          userId: data.userId,
+          cursor: 0,
+          correctChars: 0,
+          accuracy: 100,
+        },
+      }));
     };
 
     socket.on('player_reset', handlePlayerReset);
@@ -146,13 +160,9 @@ export default function TypingTest() {
       setCountdown(count);
     };
     const handleRaceStart = () => {
-      setMyPlacement(null);
       setRaceResults(null);
       setGamePhase('racing');
       setIsRunning(true);
-    };
-    const handlePlayerFinished = (data: { name: string; placement: number; wpm: number; accuracy: number }) => {
-      if (data.name === playerName) setMyPlacement(data.placement);
     };
     const handleRaceResults = (results: { name: string; placement: number; wpm: number; accuracy: number }[]) => {
       setRaceResults(results);
@@ -164,7 +174,6 @@ export default function TypingTest() {
     const handlePlayAgain = () => {
       resetLocalState();
       setRaceResults(null);
-      setMyPlacement(null);
       setGamePhase('lobby');
     };
     const handleLeaderboardUpdate = (data: { player_name: string; best_wpm: number; rank: number }[]) => {
@@ -176,7 +185,6 @@ export default function TypingTest() {
     socket.on('race_config', handleRaceConfig);
     socket.on('countdown_tick', handleCountdownTick);
     socket.on('race_start', handleRaceStart);
-    socket.on('player_finished', handlePlayerFinished);
     socket.on('race_results', handleRaceResults);
     socket.on('play_again', handlePlayAgain);
     socket.on('leaderboard_update', handleLeaderboardUpdate);
@@ -185,7 +193,6 @@ export default function TypingTest() {
       socket.off('race_config', handleRaceConfig);
       socket.off('countdown_tick', handleCountdownTick);
       socket.off('race_start', handleRaceStart);
-      socket.off('player_finished', handlePlayerFinished);
       socket.off('race_results', handleRaceResults);
       socket.off('play_again', handlePlayAgain);
       socket.off('leaderboard_update', handleLeaderboardUpdate);
@@ -293,13 +300,14 @@ export default function TypingTest() {
       setCursor(nextCursor);
       setTypedCount((prev) => prev + 1);
 
-      if(socket)
-        {socket.emit("progress_update", {
-        roomId,
-        cursor: nextCursor,
-        wpm,
-        accuracy
-      })}
+      if (socket) {
+        socket.emit('progress_update', {
+          roomId,
+          cursor: nextCursor,
+          wpm: wpmRef.current,
+          accuracy: accuracyRef.current,
+        });
+      }
 
     }
 
@@ -347,46 +355,64 @@ const handleJoinRoom = () => {
 
   if (gamePhase === 'setup') {
   return (
-    <main className="min-h-screen flex items-center justify-center bg-neutral-900 px-6 text-white">
-      <div className="w-full max-w-md rounded-xl bg-neutral-800 p-6 shadow-lg">
-        <h1 className="mb-6 text-2xl font-semibold">Typio</h1>
+    <main className="min-h-screen flex items-center justify-center bg-[#0a0a0a] px-6 relative overflow-hidden">
+      {/* Background glow */}
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+        <div className="w-175 h-125 rounded-full bg-white/3 blur-3xl" />
+      </div>
 
-        <div className="mb-4">
-          <label className="mb-2 block text-sm text-neutral-300">Player Name</label>
-          <input
-            value={playerName}
-            onChange={(e) => { setPlayerName(e.target.value); setJoinError(null); }}
-            placeholder="Enter your name"
-            className="w-full rounded-md bg-neutral-700 px-3 py-2 text-white outline-none"
-          />
+      <div className="w-full max-w-sm relative z-10">
+        {/* Logo */}
+        <div className="text-center mb-8">
+          <h1 className="text-5xl font-bold text-white tracking-tight">typio</h1>
+          <p className="mt-2 text-sm text-neutral-500">Enter a room to start racing</p>
         </div>
 
-        <div className="mb-4">
-          <label className="mb-2 block text-sm text-neutral-300">Room Code</label>
-          <input
-            value={roomInput}
-            onChange={(e) => setRoomInput(e.target.value.toUpperCase())}
-            placeholder="Enter room code"
-            className="w-full rounded-md bg-neutral-700 px-3 py-2 text-white outline-none"
-          />
-        </div>
+        <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-6 shadow-2xl backdrop-blur-xl">
+          <div className="mb-5">
+            <label className="mb-2 block text-xs font-medium uppercase tracking-widest text-neutral-500">
+              Player Name
+            </label>
+            <input
+              value={playerName}
+              onChange={(e) => { setPlayerName(e.target.value); setJoinError(null); }}
+              placeholder="Enter your name"
+              className="w-full rounded-xl border border-neutral-700/50 bg-neutral-800/60 px-4 py-3 text-sm text-white placeholder:text-neutral-600 outline-none focus:border-neutral-500 transition-colors"
+            />
+          </div>
 
-        {joinError && <p className="text-red-400 text-sm mb-4">{joinError}</p>}
+          <div className="mb-5">
+            <label className="mb-2 block text-xs font-medium uppercase tracking-widest text-neutral-500">
+              Room Code
+            </label>
+            <input
+              value={roomInput}
+              onChange={(e) => setRoomInput(e.target.value.toUpperCase())}
+              placeholder="XXXXXX"
+              className="w-full rounded-xl border border-neutral-700/50 bg-neutral-800/60 px-4 py-3 text-sm font-mono tracking-widest text-white placeholder:text-neutral-600 outline-none focus:border-neutral-500 transition-colors"
+            />
+          </div>
 
-        <div className="flex gap-3">
-          <button
-            onClick={handleCreateRoom}
-            className="flex-1 rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-500"
-          >
-            Create Room
-          </button>
+          {joinError && (
+            <div className="mb-4 rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-2 text-sm text-red-400">
+              {joinError}
+            </div>
+          )}
 
-          <button
-            onClick={handleJoinRoom}
-            className="flex-1 rounded-md bg-neutral-700 px-4 py-2 text-white hover:bg-neutral-600"
-          >
-            Join Room
-          </button>
+          <div className="flex flex-col gap-2">
+            <button
+              onClick={handleCreateRoom}
+              className="w-full rounded-xl bg-white py-3 text-sm font-semibold text-neutral-900 transition-all duration-150 hover:bg-neutral-100 hover:scale-[1.02] active:scale-[0.98]"
+            >
+              Create Room
+            </button>
+            <button
+              onClick={handleJoinRoom}
+              className="w-full rounded-xl border border-neutral-700 py-3 text-sm font-medium text-neutral-400 transition-all duration-150 hover:bg-neutral-800 hover:text-white"
+            >
+              Join Room
+            </button>
+          </div>
         </div>
       </div>
     </main>
@@ -395,48 +421,89 @@ const handleJoinRoom = () => {
 
   if (gamePhase === 'lobby') {
     return (
-      <main className="min-h-screen flex items-center justify-center bg-neutral-900 px-6 text-white">
-        <div className="w-full max-w-md rounded-xl bg-neutral-800 p-6 shadow-lg">
-          <div className="mb-1 text-xs text-neutral-500">Room: {roomId}</div>
-          <h2 className="mb-6 text-xl font-semibold">Waiting for players</h2>
+      <main className="min-h-screen flex items-center justify-center bg-[#0a0a0a] px-6 relative overflow-hidden">
+        {/* Background glow */}
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="w-175 h-125 rounded-full bg-white/3 blur-3xl" />
+        </div>
 
-          <div className="mb-6 flex flex-col gap-2">
-            {roomPlayers.map((p) => (
-              <div key={p.id} className="flex items-center gap-2 text-sm">
-                <span className={p.id === socket?.id ? 'text-white font-semibold' : 'text-neutral-300'}>
-                  {p.name}
-                </span>
-                {p.id === socket?.id && (
-                  <span className="text-xs text-neutral-500">(you)</span>
-                )}
-              </div>
-            ))}
+        <div className="w-full max-w-sm relative z-10">
+          {/* Header */}
+          <div className="text-center mb-8">
+            <h1 className="text-5xl font-bold text-white tracking-tight">typio</h1>
+            <p className="mt-2 text-sm text-neutral-500">Lobby</p>
           </div>
 
-          {isHost ? (
-            <>
-              <div className="mb-4 flex items-center gap-2 text-sm text-neutral-400">
-                <span>Duration:</span>
-                {[30, 60].map((d) => (
-                  <button
-                    key={d}
-                    onClick={() => setDuration(d)}
-                    className={`rounded-md px-3 py-1 ${duration === d ? 'bg-blue-600 text-white' : 'bg-neutral-700 text-neutral-300 hover:bg-neutral-600'}`}
+          <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-6 shadow-2xl backdrop-blur-xl">
+            {/* Room code pill */}
+            <div className="mb-6 flex items-center justify-between">
+              <span className="text-xs font-medium uppercase tracking-widest text-neutral-500">Room</span>
+              <span className="font-mono text-sm font-semibold tracking-widest text-white bg-neutral-800 border border-neutral-700/50 px-3 py-1 rounded-lg">
+                {roomId}
+              </span>
+            </div>
+
+            {/* Player list */}
+            <div className="mb-6">
+              <span className="mb-3 block text-xs font-medium uppercase tracking-widest text-neutral-500">
+                Players — {roomPlayers.length}
+              </span>
+              <div className="flex flex-col gap-2">
+                {roomPlayers.map((p) => (
+                  <div
+                    key={p.id}
+                    className={`flex items-center justify-between rounded-xl px-4 py-2.5 text-sm ${
+                      p.id === socket?.id
+                        ? 'border border-neutral-700/50 bg-neutral-800/60 text-white'
+                        : 'text-neutral-400'
+                    }`}
                   >
-                    {d}s
-                  </button>
+                    <span className={p.id === socket?.id ? 'font-semibold' : ''}>{p.name}</span>
+                    {p.id === socket?.id && (
+                      <span className="text-xs text-neutral-500">you</span>
+                    )}
+                  </div>
                 ))}
               </div>
-              <button
-                onClick={() => socket?.emit('start_race', { roomId, duration })}
-                className="w-full rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-500"
-              >
-                Start Race
-              </button>
-            </>
-          ) : (
-            <p className="text-sm text-neutral-400">Waiting for host to start...</p>
-          )}
+            </div>
+
+            {isHost ? (
+              <>
+                {/* Duration selector */}
+                <div className="mb-5">
+                  <span className="mb-3 block text-xs font-medium uppercase tracking-widest text-neutral-500">
+                    Duration
+                  </span>
+                  <div className="flex gap-2">
+                    {[30, 60].map((d) => (
+                      <button
+                        key={d}
+                        onClick={() => setDuration(d)}
+                        className={`flex-1 rounded-xl py-2.5 text-sm font-medium transition-all duration-150 ${
+                          duration === d
+                            ? 'bg-white text-neutral-900'
+                            : 'border border-neutral-700 text-neutral-400 hover:bg-neutral-800 hover:text-white'
+                        }`}
+                      >
+                        {d}s
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <button
+                  onClick={() => socket?.emit('start_race', { roomId, duration })}
+                  className="w-full rounded-xl bg-white py-3 text-sm font-semibold text-neutral-900 transition-all duration-150 hover:bg-neutral-100 hover:scale-[1.02] active:scale-[0.98]"
+                >
+                  Start Race
+                </button>
+              </>
+            ) : (
+              <div className="flex items-center gap-2 text-sm text-neutral-500">
+                <span className="h-1.5 w-1.5 rounded-full bg-neutral-500 animate-pulse" />
+                Waiting for host to start…
+              </div>
+            )}
+          </div>
         </div>
       </main>
     );
@@ -487,7 +554,6 @@ const handleJoinRoom = () => {
               onClick={() => {
                 resetLocalState();
                 setRaceResults(null);
-                setMyPlacement(null);
                 setLeaderboard([]);
                 setGamePhase('lobby');
                 socket?.emit('play_again', { roomId });
@@ -555,7 +621,7 @@ const handleJoinRoom = () => {
       
       {(() => {
         const myId = socket?.id ?? '';
-        const myEntry = { userId: myId, cursor, wpm, accuracy };
+        const myEntry = { userId: myId, cursor, correctChars: correctCount, accuracy };
         const allPlayers = [
           myEntry,
           ...Object.values(opponentProgress),
@@ -567,6 +633,7 @@ const handleJoinRoom = () => {
               const isMe = p.userId === myId;
               const name = isMe ? playerName || 'You' : (roomPlayers.find((r) => r.id === p.userId)?.name ?? 'Opponent');
               const percent = Math.min((p.cursor / text.length) * 100, 100);
+              const displayWpm = elapsedTime > 0 ? Math.round((p.correctChars / 5) / (elapsedTime / 60)) : 0;
               return (
                 <div
                   key={p.userId}
@@ -586,7 +653,7 @@ const handleJoinRoom = () => {
                       </span>
                     </div>
                     <div className="flex gap-3 text-xs text-neutral-400">
-                      <span><span className={isMe ? 'text-blue-200' : 'text-white'}>{p.wpm}</span> WPM</span>
+                      <span><span className={isMe ? 'text-blue-200' : 'text-white'}>{displayWpm}</span> WPM</span>
                       <span><span className={isMe ? 'text-blue-200' : 'text-white'}>{p.accuracy}%</span> Acc</span>
                     </div>
                   </div>

@@ -2,17 +2,16 @@
 
 A multiplayer typing race platform where players compete in real-time, track live progress, and climb a global leaderboard.
 
-## Demo
+## Live Demo
 
-> 📹 Add a demo video link here (e.g. Loom, YouTube)
+🔗 [typio-project.vercel.app](https://typio-project.vercel.app)
 
-<!-- Add screenshots below -->
-<!--
-![Setup Screen](screenshots/setup.png)
+![Landing Page](screenshots/setup.png)
+![Room Creation](screenshots/room_creation.png)  
 ![Lobby](screenshots/lobby.png)
 ![Race](screenshots/race.png)
 ![Results](screenshots/results.png)
--->
+
 
 ---
 
@@ -41,7 +40,7 @@ A multiplayer typing race platform where players compete in real-time, track liv
 | Real-time | WebSockets via Socket.IO |
 | Cache / Leaderboard | Redis (sorted sets + hashes) |
 | Database | PostgreSQL |
-| Infrastructure | Docker, Docker Compose |
+| Local Dev Infrastructure | Docker, Docker Compose |
 
 ---
 
@@ -103,7 +102,7 @@ NEXT_PUBLIC_SERVER_URL=http://localhost:3001
 
 **Server** — create `apps/server/.env`:
 ```env
-DATABASE_URL=postgresql://typerace:typerace@localhost:5432/typio
+DATABASE_URL=postgresql://typerace:typerace@localhost:5432/typerace
 REDIS_URL=redis://localhost:6379
 CLIENT_URL=http://localhost:3000
 PORT=3001
@@ -157,9 +156,25 @@ typio/
 
 ## Deployment
 
-The app is designed to deploy on **Vercel** (frontend) + **Railway** (server, Postgres, Redis).
+| Service | Provider | Purpose |
+|---------|----------|---------|
+| Frontend | [Vercel](https://vercel.com) | Hosts the Next.js app |
+| Backend | [Railway](https://railway.app) | Runs the Node.js server |
+| PostgreSQL | [Neon](https://neon.tech) | Managed Postgres database |
+| Redis | [Redis Cloud](https://redis.io/try-free) | Managed Redis instance |
 
-See environment variables above — swap `localhost` URLs for your production URLs in your hosting dashboard. No code changes needed.
+**Vercel — Environment Variables:**
+```env
+NEXT_PUBLIC_SERVER_URL=https://your-server.up.railway.app
+```
+
+**Railway — Environment Variables:**
+```env
+DATABASE_URL=<neon connection string>
+REDIS_URL=<redis cloud connection string>
+CLIENT_URL=https://your-app.vercel.app
+PORT=3001
+```
 
 ---
 
